@@ -1,6 +1,6 @@
 // Aging Hutang - WEB
-// STEP 1 + STEP 2 + STEP 3
-// READ EXCEL + HEADER VALIDATION + GROUPING + NORMALISASI (NO POSITIVE)
+// STEP 1–4
+// Read + Group + Normalize (NO POSITIVE) + Export Excel + Export Log
 
 document.getElementById("btnProcess").addEventListener("click", () => {
     const fileInput = document.getElementById("fileInput");
@@ -14,9 +14,11 @@ document.getElementById("btnProcess").addEventListener("click", () => {
     }
 
     const file = fileInput.files[0];
+    const baseName = file.name.replace(/\.xlsx$/i, "");
+
     let msg = "";
-    msg += "Aging Hutang (Web – Step 1)\n";
-    msg += file.name + "\n";
+    msg += "Aging Hutang (Web)\n";
+    msg += file.name + "\n\n";
 
     const reader = new FileReader();
 
@@ -38,8 +40,7 @@ document.getElementById("btnProcess").addEventListener("click", () => {
             });
 
             if (rows.length < 2) {
-                status.textContent = "ERROR: Sheet kosong / tidak ada data.";
-                return;
+                throw new Error("Sheet kosong / tidak ada data.");
             }
 
             const header = rows[0];
@@ -69,11 +70,6 @@ document.getElementById("btnProcess").addEventListener("click", () => {
             msg += "HEADER VALID ✔\n";
             msg += "Sheet: " + sheetName + "\n";
             msg += "Total baris data: " + rowCount + "\n\n";
-            msg += "Mapping kolom:\n";
-
-            Object.keys(colIndex).forEach(k => {
-                msg += `- ${k} → kolom index ${colIndex[k]}\n`;
-            });
 
             // =====================
             // STEP 2 — GROUPING
@@ -105,7 +101,8 @@ document.getElementById("btnProcess").addEventListener("click", () => {
                 const rowObj = {
                     excelRow: idx + 2,
                     docType,
-                    amount
+                    amount,
+                    originalRow: r
                 };
 
                 groups[key].rows.push(rowObj);
@@ -117,18 +114,14 @@ document.getElementById("btnProcess").addEventListener("click", () => {
                 }
             });
 
-            msg += "\nSTEP 2 – GROUPING RESULT\n";
-            msg += "Total group (Vendor + Assignment): " + Object.keys(groups).length + "\n";
-
             // =====================
-            // STEP 3 — NORMALISASI HUTANG
+            // STEP 3 — NORMALISASI
             // =====================
             let errorNoRE = [];
             let positiveTotal = [];
 
             for (const key in groups) {
                 const g = groups[key];
-
                 const total = g.rows.reduce((s, r) => s + r.amount, 0);
 
                 if (g.reRows.length === 0) {
@@ -140,39 +133,98 @@ document.getElementById("btnProcess").addEventListener("click", () => {
                     positiveTotal.push(`${key} = ${total}`);
                 }
 
-                // simpan hasil (belum ditulis ke Excel)
                 g.finalTotal = total;
 
                 g.reRows.forEach(r => r.newAmount = total);
                 g.otherRows.forEach(r => r.newAmount = 0);
             }
 
-            msg += "\nSTEP 3 – NORMALISASI HUTANG\n";
-            msg += "Group diproses : " + Object.keys(groups).length + "\n";
-            msg += "Group tanpa RE : " + errorNoRE.length + "\n";
-            msg += "Total positif  : " + positiveTotal.length + "\n";
+            // =====================
+            // STEP 4 — WRITE RESULT
+            // =====================
+            const outputRows = [header];
+
+            dataRows.forEach((r, idx) => {
+                const vendor = String(r[colIndex["Account"]] || "").trim();
+                const assignment = String(r[colIndex["Assignment"]] || "").trim();
+
+                if (!vendor || !assignment) {
+                    outputRows.push(r);
+                    return;
+                }
+
+                const key = vendor + "||" + assignment;
+                const g = groups[key];
+
+                if (!g) {
+                    outputRows.push(r);
+                    return;
+                }
+
+                const rowObj = g.rows.find(x => x.excelRow === idx + 2);
+
+                if (rowObj && typeof rowObj.newAmount === "number") {
+                    r[colIndex["Amount in local currency"]] = rowObj.newAmount;
+                }
+
+                outputRows.push(r);
+            });
+
+            // =====================
+            // EXPORT EXCEL
+            // =====================
+            const newWb = XLSX.utils.book_new();
+            const newWs = XLSX.utils.aoa_to_sheet(outputRows);
+            XLSX.utils.book_append_sheet(newWb, newWs, "AGING");
+
+            XLSX.writeFile(newWb, baseName + "_AGING.xlsx");
+
+            // =====================
+            // EXPORT LOG
+            // =====================
+            let log = "";
+            log += "AGING HUTANG LOG\n";
+            log += file.name + "\n\n";
+            log += "Total Group: " + Object.keys(groups).length + "\n";
+            log += "Group tanpa RE: " + errorNoRE.length + "\n";
+            log += "Group total positif: " + positiveTotal.length + "\n\n";
 
             if (errorNoRE.length > 0) {
-                msg += "\n❌ GROUP TANPA RE:\n";
-                errorNoRE.slice(0, 5).forEach(e => msg += "- " + e + "\n");
+                log += "=== GROUP TANPA RE ===\n";
+                errorNoRE.forEach(e => log += e + "\n");
+                log += "\n";
             }
 
             if (positiveTotal.length > 0) {
-                msg += "\n❌ TOTAL MASIH POSITIF (INVALID):\n";
-                positiveTotal.slice(0, 5).forEach(e => msg += "- " + e + "\n");
+                log += "=== TOTAL MASIH POSITIF (ERROR) ===\n";
+                positiveTotal.forEach(e => log += e + "\n");
+                log += "\n";
+            }
+
+            const logBlob = new Blob([log], { type: "text/plain;charset=utf-8" });
+            const logLink = document.createElement("a");
+            logLink.href = URL.createObjectURL(logBlob);
+            logLink.download = baseName + "_AGING_LOG.txt";
+            logLink.click();
+
+            // =====================
+            // FINAL STATUS
+            // =====================
+            msg += "STEP 4 – EXPORT\n";
+            msg += "Excel hasil : " + baseName + "_AGING.xlsx\n";
+            msg += "Log file    : " + baseName + "_AGING_LOG.txt\n\n";
+
+            if (positiveTotal.length > 0) {
+                msg += "❌ ERROR: masih ada total positif. CEK LOG.\n";
+            } else {
+                msg += "✅ SELESAI: tidak ada nilai positif.\n";
             }
 
             status.textContent = msg;
 
-            // STOP DI SINI (BELUM EXPORT)
-
         } catch (err) {
             status.textContent = "ERROR:\n" + err.message;
         }
-    };
-
-    reader.onerror = function () {
-        status.textContent = "ERROR: gagal membaca file.";
     };
 
     reader.readAsArrayBuffer(file);
