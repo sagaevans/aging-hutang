@@ -1,7 +1,6 @@
 // Aging Hutang - WEB
-// STEP 1 + STEP 2
-// READ EXCEL + HEADER VALIDATION + GROUPING
-// SAFE VERSION (NO DATA MODIFICATION)
+// STEP 1 + STEP 2 + STEP 3
+// READ EXCEL + HEADER VALIDATION + GROUPING + NORMALISASI (NO POSITIVE)
 
 document.getElementById("btnProcess").addEventListener("click", () => {
     const fileInput = document.getElementById("fileInput");
@@ -15,7 +14,9 @@ document.getElementById("btnProcess").addEventListener("click", () => {
     }
 
     const file = fileInput.files[0];
-    status.textContent = "Membaca file Excel...\nFile: " + file.name;
+    let msg = "";
+    msg += "Aging Hutang (Web – Step 1)\n";
+    msg += file.name + "\n";
 
     const reader = new FileReader();
 
@@ -44,9 +45,6 @@ document.getElementById("btnProcess").addEventListener("click", () => {
             const header = rows[0];
             const rowCount = rows.length - 1;
 
-            // =====================
-            // HEADER VALIDATION
-            // =====================
             const requiredHeaders = [
                 "G/L Account",
                 "Account",
@@ -68,9 +66,6 @@ document.getElementById("btnProcess").addEventListener("click", () => {
                 colIndex[h] = idx;
             });
 
-            let msg = "";
-            msg += "Aging Hutang (Web – Step 1)\n";
-            msg += file.name + "\n";
             msg += "HEADER VALID ✔\n";
             msg += "Sheet: " + sheetName + "\n";
             msg += "Total baris data: " + rowCount + "\n\n";
@@ -84,7 +79,7 @@ document.getElementById("btnProcess").addEventListener("click", () => {
             // STEP 2 — GROUPING
             // =====================
             const groups = {};
-            const dataRows = rows.slice(1); // tanpa header
+            const dataRows = rows.slice(1);
 
             dataRows.forEach((r, idx) => {
                 const vendor = String(r[colIndex["Account"]] || "").trim();
@@ -108,7 +103,7 @@ document.getElementById("btnProcess").addEventListener("click", () => {
                 }
 
                 const rowObj = {
-                    excelRow: idx + 2, // baris Excel asli
+                    excelRow: idx + 2,
                     docType,
                     amount
                 };
@@ -122,26 +117,54 @@ document.getElementById("btnProcess").addEventListener("click", () => {
                 }
             });
 
-            // =====================
-            // GROUPING SUMMARY
-            // =====================
-            const totalGroups = Object.keys(groups).length;
-
             msg += "\nSTEP 2 – GROUPING RESULT\n";
-            msg += "Total group (Vendor + Assignment): " + totalGroups + "\n";
+            msg += "Total group (Vendor + Assignment): " + Object.keys(groups).length + "\n";
 
-            let shown = 0;
-            for (const k in groups) {
-                if (shown >= 3) break;
-                const g = groups[k];
-                msg += `\n[${g.key}]\n`;
-                msg += `  Total Rows : ${g.rows.length}\n`;
-                msg += `  RE Rows    : ${g.reRows.length}\n`;
-                msg += `  Other Rows : ${g.otherRows.length}\n`;
-                shown++;
+            // =====================
+            // STEP 3 — NORMALISASI HUTANG
+            // =====================
+            let errorNoRE = [];
+            let positiveTotal = [];
+
+            for (const key in groups) {
+                const g = groups[key];
+
+                const total = g.rows.reduce((s, r) => s + r.amount, 0);
+
+                if (g.reRows.length === 0) {
+                    errorNoRE.push(key);
+                    continue;
+                }
+
+                if (total > 0) {
+                    positiveTotal.push(`${key} = ${total}`);
+                }
+
+                // simpan hasil (belum ditulis ke Excel)
+                g.finalTotal = total;
+
+                g.reRows.forEach(r => r.newAmount = total);
+                g.otherRows.forEach(r => r.newAmount = 0);
+            }
+
+            msg += "\nSTEP 3 – NORMALISASI HUTANG\n";
+            msg += "Group diproses : " + Object.keys(groups).length + "\n";
+            msg += "Group tanpa RE : " + errorNoRE.length + "\n";
+            msg += "Total positif  : " + positiveTotal.length + "\n";
+
+            if (errorNoRE.length > 0) {
+                msg += "\n❌ GROUP TANPA RE:\n";
+                errorNoRE.slice(0, 5).forEach(e => msg += "- " + e + "\n");
+            }
+
+            if (positiveTotal.length > 0) {
+                msg += "\n❌ TOTAL MASIH POSITIF (INVALID):\n";
+                positiveTotal.slice(0, 5).forEach(e => msg += "- " + e + "\n");
             }
 
             status.textContent = msg;
+
+            // STOP DI SINI (BELUM EXPORT)
 
         } catch (err) {
             status.textContent = "ERROR:\n" + err.message;
