@@ -1,231 +1,132 @@
-// Aging Hutang - WEB
-// STEP 1–4
-// Read + Group + Normalize (NO POSITIVE) + Export Excel + Export Log
+let finalRows = [];
+let logLines = [];
+let workbookName = "aging_hutang";
 
-document.getElementById("btnProcess").addEventListener("click", () => {
-    const fileInput = document.getElementById("fileInput");
-    const status = document.getElementById("status");
+function processFile() {
+  const fileInput = document.getElementById("fileInput");
+  const output = document.getElementById("output");
+  logLines = [];
+  finalRows = [];
 
-    status.textContent = "";
+  if (!fileInput.files.length) {
+    output.textContent = "ERROR: File belum dipilih";
+    return;
+  }
 
-    if (!fileInput.files || fileInput.files.length === 0) {
-        status.textContent = "Status: belum ada file dipilih.";
-        return;
-    }
+  const file = fileInput.files[0];
+  workbookName = file.name.replace(".xlsx", "");
 
-    const file = fileInput.files[0];
-    const baseName = file.name.replace(/\.xlsx$/i, "");
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const data = new Uint8Array(e.target.result);
+    const wb = XLSX.read(data, { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
-    let msg = "";
-    msg += "Aging Hutang (Web)\n";
-    msg += file.name + "\n\n";
+    const header = rows[0];
+    const dataRows = rows.slice(1);
 
-    const reader = new FileReader();
+    output.textContent =
+      `HEADER VALID ✔\n` +
+      `Sheet: ${wb.SheetNames[0]}\n` +
+      `Total baris data: ${dataRows.length}\n\n`;
 
-    reader.onload = function (e) {
-        try {
-            // =====================
-            // STEP 1 — READ EXCEL
-            // =====================
-            const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, { type: "array" });
-
-            const sheetName = workbook.SheetNames[0];
-            const worksheet = workbook.Sheets[sheetName];
-
-            const rows = XLSX.utils.sheet_to_json(worksheet, {
-                header: 1,
-                raw: true,
-                defval: ""
-            });
-
-            if (rows.length < 2) {
-                throw new Error("Sheet kosong / tidak ada data.");
-            }
-
-            const header = rows[0];
-            const rowCount = rows.length - 1;
-
-            const requiredHeaders = [
-                "G/L Account",
-                "Account",
-                "Assignment",
-                "Document Number",
-                "Document Type",
-                "Posting Date",
-                "Amount in local currency",
-                "Local Currency",
-                "Text"
-            ];
-
-            const colIndex = {};
-            requiredHeaders.forEach(h => {
-                const idx = header.indexOf(h);
-                if (idx === -1) {
-                    throw new Error(`Header wajib tidak ditemukan: ${h}`);
-                }
-                colIndex[h] = idx;
-            });
-
-            msg += "HEADER VALID ✔\n";
-            msg += "Sheet: " + sheetName + "\n";
-            msg += "Total baris data: " + rowCount + "\n\n";
-
-            // =====================
-            // STEP 2 — GROUPING
-            // =====================
-            const groups = {};
-            const dataRows = rows.slice(1);
-
-            dataRows.forEach((r, idx) => {
-                const vendor = String(r[colIndex["Account"]] || "").trim();
-                const assignment = String(r[colIndex["Assignment"]] || "").trim();
-                const docType = String(r[colIndex["Document Type"]] || "").trim();
-                const amount = Number(r[colIndex["Amount in local currency"]]) || 0;
-
-                if (!vendor || !assignment) return;
-
-                const key = vendor + "||" + assignment;
-
-                if (!groups[key]) {
-                    groups[key] = {
-                        key,
-                        vendor,
-                        assignment,
-                        rows: [],
-                        reRows: [],
-                        otherRows: []
-                    };
-                }
-
-                const rowObj = {
-                    excelRow: idx + 2,
-                    docType,
-                    amount,
-                    originalRow: r
-                };
-
-                groups[key].rows.push(rowObj);
-
-                if (docType === "RE") {
-                    groups[key].reRows.push(rowObj);
-                } else {
-                    groups[key].otherRows.push(rowObj);
-                }
-            });
-
-            // =====================
-            // STEP 3 — NORMALISASI
-            // =====================
-            let errorNoRE = [];
-            let positiveTotal = [];
-
-            for (const key in groups) {
-                const g = groups[key];
-                const total = g.rows.reduce((s, r) => s + r.amount, 0);
-
-                if (g.reRows.length === 0) {
-                    errorNoRE.push(key);
-                    continue;
-                }
-
-                if (total > 0) {
-                    positiveTotal.push(`${key} = ${total}`);
-                }
-
-                g.finalTotal = total;
-
-                g.reRows.forEach(r => r.newAmount = total);
-                g.otherRows.forEach(r => r.newAmount = 0);
-            }
-
-            // =====================
-            // STEP 4 — WRITE RESULT
-            // =====================
-            const outputRows = [header];
-
-            dataRows.forEach((r, idx) => {
-                const vendor = String(r[colIndex["Account"]] || "").trim();
-                const assignment = String(r[colIndex["Assignment"]] || "").trim();
-
-                if (!vendor || !assignment) {
-                    outputRows.push(r);
-                    return;
-                }
-
-                const key = vendor + "||" + assignment;
-                const g = groups[key];
-
-                if (!g) {
-                    outputRows.push(r);
-                    return;
-                }
-
-                const rowObj = g.rows.find(x => x.excelRow === idx + 2);
-
-                if (rowObj && typeof rowObj.newAmount === "number") {
-                    r[colIndex["Amount in local currency"]] = rowObj.newAmount;
-                }
-
-                outputRows.push(r);
-            });
-
-            // =====================
-            // EXPORT EXCEL
-            // =====================
-            const newWb = XLSX.utils.book_new();
-            const newWs = XLSX.utils.aoa_to_sheet(outputRows);
-            XLSX.utils.book_append_sheet(newWb, newWs, "AGING");
-
-            XLSX.writeFile(newWb, baseName + "_AGING.xlsx");
-
-            // =====================
-            // EXPORT LOG
-            // =====================
-            let log = "";
-            log += "AGING HUTANG LOG\n";
-            log += file.name + "\n\n";
-            log += "Total Group: " + Object.keys(groups).length + "\n";
-            log += "Group tanpa RE: " + errorNoRE.length + "\n";
-            log += "Group total positif: " + positiveTotal.length + "\n\n";
-
-            if (errorNoRE.length > 0) {
-                log += "=== GROUP TANPA RE ===\n";
-                errorNoRE.forEach(e => log += e + "\n");
-                log += "\n";
-            }
-
-            if (positiveTotal.length > 0) {
-                log += "=== TOTAL MASIH POSITIF (ERROR) ===\n";
-                positiveTotal.forEach(e => log += e + "\n");
-                log += "\n";
-            }
-
-            const logBlob = new Blob([log], { type: "text/plain;charset=utf-8" });
-            const logLink = document.createElement("a");
-            logLink.href = URL.createObjectURL(logBlob);
-            logLink.download = baseName + "_AGING_LOG.txt";
-            logLink.click();
-
-            // =====================
-            // FINAL STATUS
-            // =====================
-            msg += "STEP 4 – EXPORT\n";
-            msg += "Excel hasil : " + baseName + "_AGING.xlsx\n";
-            msg += "Log file    : " + baseName + "_AGING_LOG.txt\n\n";
-
-            if (positiveTotal.length > 0) {
-                msg += "❌ ERROR: masih ada total positif. CEK LOG.\n";
-            } else {
-                msg += "✅ SELESAI: tidak ada nilai positif.\n";
-            }
-
-            status.textContent = msg;
-
-        } catch (err) {
-            status.textContent = "ERROR:\n" + err.message;
-        }
+    const IDX = {
+      gl: 0,
+      vendor: 1,
+      assignment: 2,
+      docNo: 3,
+      docType: 4,
+      date: 5,
+      amount: 6,
+      currency: 7,
+      text: 8
     };
 
-    reader.readAsArrayBuffer(file);
-});
+    // ===== GROUPING =====
+    const groups = {};
+    dataRows.forEach((r, i) => {
+      const key = `${r[IDX.vendor]}||${r[IDX.assignment]}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push({ row: r, idx: i + 2 });
+    });
+
+    output.textContent +=
+      `STEP 2 – GROUPING RESULT\n` +
+      `Total group (Vendor + Assignment): ${Object.keys(groups).length}\n\n`;
+
+    let hasPositive = false;
+
+    Object.entries(groups).forEach(([key, items]) => {
+      let sum = 0;
+      let reRow = null;
+
+      items.forEach(o => {
+        const val = Number(o.row[IDX.amount]) || 0;
+        sum += val;
+        if (o.row[IDX.docType] === "RE" && !reRow) {
+          reRow = o.row;
+        }
+      });
+
+      if (!reRow) {
+        reRow = items[0].row;
+        logLines.push(`[WARN] RE tidak ditemukan → pakai baris pertama (${key})`);
+      }
+
+      // ===== NORMALISASI =====
+      reRow[IDX.amount] = sum;
+
+      items.forEach(o => {
+        if (o.row !== reRow) {
+          o.row[IDX.amount] = 0;
+        }
+      });
+
+      if (sum > 0) {
+        hasPositive = true;
+        logLines.push(`[ERROR] POSITIF > 0 | ${key} | ${sum}`);
+      }
+    });
+
+    finalRows = [header, ...dataRows];
+
+    if (hasPositive) {
+      output.innerHTML += `\n<span class="error">ERROR: Masih ada nilai POSITIF (>0). Export DIBLOKIR.</span>`;
+      logLines.push("EXPORT DIBLOKIR: nilai positif masih ada");
+      return;
+    }
+
+    output.innerHTML += `\n<span class="ok">OK: Tidak ada nilai positif. Siap export.</span>`;
+    logLines.push("SUCCESS: Semua nilai ≤ 0");
+  };
+
+  reader.readAsArrayBuffer(file);
+}
+
+// ===== EXPORT EXCEL =====
+function downloadExcel() {
+  if (!finalRows.length) {
+    alert("Belum ada hasil");
+    return;
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(finalRows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "AGING_RESULT");
+  XLSX.writeFile(wb, workbookName + "_RESULT.xlsx");
+}
+
+// ===== EXPORT LOG =====
+function downloadLog() {
+  if (!logLines.length) {
+    alert("Log kosong");
+    return;
+  }
+
+  const blob = new Blob([logLines.join("\n")], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = workbookName + "_LOG.txt";
+  a.click();
+}
