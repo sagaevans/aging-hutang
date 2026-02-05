@@ -1,52 +1,37 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-    <meta charset="UTF-8">
-    <title>Aging Hutang - Web Version</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f5f7fa;
-            padding: 20px;
-        }
-        .box {
-            background: #ffffff;
-            padding: 20px;
-            border-radius: 6px;
-            max-width: 600px;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-        }
-        h2 {
-            margin-top: 0;
-        }
-        input[type="file"] {
-            margin-bottom: 10px;
-        }
-        button {
-            padding: 8px 16px;
-            cursor: pointer;
-        }
-        #status {
-            margin-top: 15px;
-            white-space: pre-wrap;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <title>Aging Hutang – Web</title>
+  <style>
+    body { font-family: Arial; margin: 30px; }
+    button { margin-top: 10px; padding: 6px 12px; }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      max-height: 500px;
+      overflow: auto;
+      white-space: pre-wrap;
+    }
+    .error { color: red; font-weight: bold; }
+    .ok { color: green; font-weight: bold; }
+  </style>
 </head>
 <body>
 
-<div class="box">
-    <h2>Aging Hutang (Web – Step 1)</h2>
+<h2>Aging Hutang (Web Version)</h2>
 
-    <input type="file" id="fileInput" accept=".xlsx" />
-    <br>
-    <button id="btnProcess">Proses</button>
+<input type="file" id="fileInput" accept=".xlsx">
+<br>
+<button onclick="processFile()">Proses</button>
+<button onclick="downloadExcel()">Download Excel</button>
+<button onclick="downloadLog()">Download Log</button>
 
-    <div id="status">Status: menunggu file...</div>
-</div>
+<pre id="output">Menunggu file...</pre>
 
-<!-- SheetJS -->
+<!-- WAJIB: XLSX dulu -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-
 <script src="app.js"></script>
+
 </body>
 </html>
